@@ -180,7 +180,6 @@ def _fsdp_wrap(
     else:
         raise KeyError("distributed strategy should be one of fsdp, dpp, or hsdp")
 
-    print("SAHIL: fix use_orig_params=True in models/__init__.py")
     model = FSDP(
         model,
         param_init_fn=init_fn,
@@ -190,7 +189,6 @@ def _fsdp_wrap(
         auto_wrap_policy=_fsdp_autowrap_policy,
         mixed_precision=mp_policy,
         sharding_strategy=dp_strategy,
-        use_orig_params=True,
     )
 
     wrapper_fn = partial(
@@ -241,9 +239,6 @@ def get_model(
     rank, world_size = distributed.rank_and_world(group)
     local_rank = distributed.local_rank()
 
-    #if distributed_strategy is None or distributed_strategy == "":
-    #    if world_size > 1:
-    #        distributed_strategy = "tp"
 
     if device_type == "cuda":
         device = torch.device(device_type, local_rank)

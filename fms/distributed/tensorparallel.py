@@ -7,7 +7,6 @@ import torch.distributed as dist
 import torch.distributed._functional_collectives as funcol
 from torch import nn
 
-TP_MESH = None
 
 ## Fixes for PT 2.2 collectives until PT 2.3 is released
 
@@ -72,7 +71,6 @@ def _all_gather_into_tensor(inp, group_size, group_name):
 
 def _all_gather(input_: torch.Tensor, world_size) -> torch.Tensor:
     """Gather the input tensor across model parallel group."""
-    #world_size = dist.get_world_size()
 
     if world_size == 1:
         return input_
@@ -86,10 +84,6 @@ def _all_gather(input_: torch.Tensor, world_size) -> torch.Tensor:
             torch.ops._c10d_functional.all_gather_into_tensor(
                 input_.transpose(0, last_dim).contiguous(), world_size, "default"
             )
-        #funcol.wait_tensor(
-        #    funcol.all_gather_tensor(
-        #        input_.transpose(0, last_dim).contiguous(), 0, TP_MESH
-        #    )
         )
         .transpose(0, last_dim)
         .contiguous()
@@ -98,7 +92,6 @@ def _all_gather(input_: torch.Tensor, world_size) -> torch.Tensor:
 
 def _all_reduce(input_: torch.Tensor, world_size) -> torch.Tensor:
     """All-reduce the input tensor across model parallel group."""
-    #world_size = dist.get_world_size()
 
     if world_size == 1:
         return input_
@@ -107,7 +100,6 @@ def _all_reduce(input_: torch.Tensor, world_size) -> torch.Tensor:
     return torch.ops._c10d_functional.wait_tensor(
         torch.ops._c10d_functional.all_reduce(input_, "sum", "default")
     )
-    #return funcol.wait_tensor(funcol.all_reduce(input_, "sum", TP_MESH))
 
 
 def _split(input_: torch.Tensor, rank, world_size) -> torch.Tensor:
