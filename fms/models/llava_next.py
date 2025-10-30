@@ -26,7 +26,7 @@ _granite_3_2_2b_text_config = GraniteConfig(
     emb_dim=2048,
     norm_eps=1e-5,
     nheads=32,
-    head_dim=64,
+    head_dim=128,
     kvheads=8,
     nlayers=40,
     hidden_grow_factor=8192 / 2048,
@@ -391,11 +391,12 @@ class LlavaNext(nn.Module):
 
         if kwargs["use_cache"] and iteration > 0:
             # No need to process image data again in cached decoding stage.
+            input_ids = self.language_model.base_model.embedding(input_ids)
             return input_ids, kwargs
 
         pixel_values = kwargs.get("pixel_values")
         image_sizes = kwargs.get("image_sizes")
-
+        
         # No image data to pre-process
         if pixel_values is None or pixel_values.size(0) == 0:
             return input_ids, kwargs
@@ -505,6 +506,67 @@ def _hf_to_fms_names(input_sd: Mapping[str, Any], **kwargs) -> Mapping[str, Any]
 
 
 # From Granite model
+def _weight_expansion_for_mismatched_head_dim(
+    input_sd: Mapping[str, Any], model_config=None
+) -> Mapping[str, Any]:
+    # weight expansion needed only for granite text model
+    if any([i for i in input_sd.keys() if 'vision_tower' in i]):
+        return input_sd
+
+    new_sd = dict(input_sd)
+    if model_config:
+        model_config = model_config.text_config
+    if (
+        model_config
+        and model_config.head_dim > model_config.emb_dim // model_config.nheads
+    ):
+        expansion_factor = (
+            model_config.head_dim * model_config.nheads
+        ) // model_config.emb_dim
+        assert expansion_factor % 2 == 0
+        # dim of layers to be expanded
+        layer_dim = {
+            "attn.in_proj.query": 0,
+            "attn.in_proj.key": 0,
+            "attn.in_proj.value": 0,
+            "attn.dense": 1,
+        }
+
+        expand_layer_dim = {
+            layer: layer_dim[tgt]
+            for layer in new_sd
+            for tgt in layer_dim
+            if tgt in layer
+        }
+
+        for layer, expand_dim in expand_layer_dim.items():
+            tensor_value = new_sd[layer]
+            original_size = list(tensor_value.size())
+            # print(original_size)
+            expanded_size = original_size.copy()
+            expanded_size[expand_dim] = expanded_size[expand_dim] * expansion_factor
+            print(
+                f"WARNING:fms.models.granite: expanding weights of {('.'.join(layer.split('.')[1:-1])):30.30} {str(original_size):12.12} => {expanded_size}"
+            )
+            slices = [
+                slice(0, None, expansion_factor) if dim == expand_dim else slice(None)
+                for dim in range(tensor_value.ndim)
+            ]
+            # Assign the original weights tensor to the interleaved positions
+            expanded_tensor = torch.zeros(expanded_size)
+            expanded_tensor[tuple(slices)] = tensor_value
+            new_sd[layer] = expanded_tensor
+
+    return new_sd
+
+
+serialization.register_adapter_step(
+    _architecture_name,
+    "weight_expansion_for_mismatched_head_dim",
+    _weight_expansion_for_mismatched_head_dim,
+)
+
+# From Granite model
 def _get_rope_params(linear_type: str) -> list[str]:
     if "gptq" in linear_type:
         return ["qweight", "scales", "qzeros", "bias"]
@@ -595,5 +657,5 @@ serialization.register_adapter_step(
 serialization.register_adapter(
     _architecture_name,
     "hf",
-    ["hf_to_fms_names", "hf_to_fms_rope", "weight_fusion"],
+    ["hf_to_fms_names", "hf_to_fms_rope", "weight_expansion_for_mismatched_head_dim", "weight_fusion"],
 )
